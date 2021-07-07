@@ -23,9 +23,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
    defer {
      NSApp.terminate(self)
    }
-    let connectionStore = OutlineConnectionStore(appGroup: AppDelegate.kAppGroup)
-    if connectionStore.status != OutlineConnection.ConnectionStatus.connected {
-      return NSLog("Not lauching, Outline not connected at shutdown")
+    let tunnelStore = OutlineTunnelStore(appGroup: AppDelegate.kAppGroup)
+    if tunnelStore.status != OutlineTunnel.TunnelStatus.connected {
+      return NSLog("Not launching, Outline not connected at shutdown")
     }
     // Retrieve the main app's bundle ID programmatically from the embedded launcher bundle ID.
     guard let launcherBundleId = Bundle.main.bundleIdentifier else {

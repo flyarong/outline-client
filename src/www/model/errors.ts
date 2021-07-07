@@ -31,6 +31,12 @@ export class ServerAlreadyAdded extends OutlineError {
   }
 }
 
+export class ShadowsocksUnsupportedCipher extends OutlineError {
+  constructor(public readonly cipher: string) {
+    super();
+  }
+}
+
 export class ServerIncompatible extends OutlineError {
   constructor(message: string) {
     super(message);
@@ -89,7 +95,7 @@ export class SystemConfigurationException extends RegularNativeError {}
 
 //////
 // Now, "unexpected" errors.
-// Use these sparingly beacause each occurrence triggers a Sentry report.
+// Use these sparingly because each occurrence triggers a Sentry report.
 //////
 
 // Windows.

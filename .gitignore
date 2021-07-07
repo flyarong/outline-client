@@ -10,10 +10,12 @@ info.txt
 /third_party/Potatso/Pods
 /Carthage
 xcuserdata/
-dist/
 .vs/
 obj/
 packages/
 *.pdb
 tools/OutlineService/OutlineService/bin/*
 !tools/OutlineService/OutlineService/bin/*.exe
+*.sw?
+tools/smartdnsblock/bin/*
+!tools/smartdnsblock/bin/*.exe

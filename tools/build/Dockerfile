@@ -1,28 +1,31 @@
-# Many of the Android build tools require glibc and are
-# built for 32 bit systems. Running such binaries is a
-# lot easier on Ubuntu than on Alpine.  
-FROM ubuntu:18.04
+# Copyright 2019 The Outline Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-# We install curl because while wget may be much smaller,
-# some of the install scripts themselves invoke curl.
+# Though we normally prefer Alpine, many of the Android build tools require glibc.
+FROM debian:9
 
 # Notes on dependencies:
 #  - Bower requires git
 #  - gnupg is needed by the Node.js installer to add an Apt repository.
-#  - Specify openjdk-8-jre-headless explicitly to prevent versions >8
-#    from being installed, which aren't compatible with the Android tools.
-RUN apt update && apt install -y curl unzip openjdk-8-jdk openjdk-8-jre-headless gradle git gnupg rsync && apt clean
+#  - Several of Outline's build scripts require rsync.
+RUN apt update && apt dist-upgrade -y && apt install -y wget unzip openjdk-8-jdk-headless gradle git gnupg rsync && apt clean
 
-# Node.js.
-RUN curl -sL https://deb.nodesource.com/setup_8.x | bash -
-RUN apt install -y nodejs
-
-# Yarn.
-# Set this explicitly because $HOME is set to / by default
-# in Dockerfiles, confusing the yarn install script.
-ENV HOME /root
-RUN curl -sL https://yarnpkg.com/install.sh | bash -
-ENV PATH $HOME/.yarn/bin:${PATH}
+# Node.js and Yarn.
+RUN wget -qO- https://deb.nodesource.com/setup_10.x | bash -
+RUN wget -qO- https://dl.yarnpkg.com/debian/pubkey.gpg | apt-key add -
+RUN echo "deb https://dl.yarnpkg.com/debian/ stable main" | tee /etc/apt/sources.list.d/yarn.list
+RUN apt update && apt install -y nodejs yarn && apt clean
 
 # https://stackoverflow.com/questions/25672924/run-bower-from-root-user-its-possible-how
 RUN echo '{"allow_root": true}' > /root/.bowerrc
@@ -35,21 +38,27 @@ ENV CI=true
 # trial and error, old pinball machine parts, and various
 # Dockerfiles lying around Github. Bitrise, in particular,
 # maintains images with many useful hints:
-#   https://github.com/bitrise-docker/android 
+#   https://github.com/bitrise-docker/android
 
-# Android SDK ("command line tools only"):
-#   https://developer.android.com/studio/index.html#downloads
-# This is version 26.1.1.
-RUN curl -o /tmp/android-tools.zip https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip && \
-    mkdir /opt/android-sdk && \
-    unzip /tmp/android-tools.zip -d /opt/android-sdk && \
-    rm /tmp/android-tools.zip
-ENV PATH ${PATH}:/opt/android-sdk/tools/bin
-ENV ANDROID_HOME /opt/android-sdk
+# Download Android Command Line Tools:
+#   https://developer.android.com/studio/command-line
+# This is version 2.1.
+ENV ANDROID_SDK_ROOT /opt/android-sdk
+RUN cd /opt \
+    && wget -q https://dl.google.com/android/repository/commandlinetools-linux-6609375_latest.zip -O android-commandline-tools.zip \
+    && mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools \
+    && unzip -q android-commandline-tools.zip -d ${ANDROID_SDK_ROOT}/cmdline-tools \
+    && rm android-commandline-tools.zip
+
+ENV PATH ${PATH}:${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/cmdline-tools/tools/bin
 
 # Android SDK Build Tools:
 #   https://developer.android.com/studio/releases/build-tools.html
 # To find the latest version's label:
 #   sdkmanager --list|grep build-tools
-ENV ANDROID_BUILD_TOOLS_VERSION 28.0.1
-RUN yes | sdkmanager "build-tools;${ANDROID_BUILD_TOOLS_VERSION}"
+ENV ANDROID_BUILD_TOOLS_VERSION 30.0.2
+# NDK (side by side) version must be kept in sync with the default build tools NDK version.
+ENV NDK_VERSION 21.0.6113669
+RUN yes | sdkmanager \
+  "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" \
+  "ndk;${NDK_VERSION}"

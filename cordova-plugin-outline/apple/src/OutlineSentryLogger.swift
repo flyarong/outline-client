@@ -37,14 +37,23 @@ class OutlineSentryLogger: DDAbstractLogger {
   func initializeLogging() {
     guard let containerUrl = FileManager.default.containerURL(
         forSecurityApplicationGroupIdentifier: OutlineSentryLogger.kAppGroup) else {
-      DDLogError("Failed to retrive app container directory")
+      DDLogError("Failed to retrieve app container directory")
       return
     }
     self.logsDirectory = containerUrl.appendingPathComponent("Logs").path
 
     DDLog.add(OutlineSentryLogger.sharedInstance)
-    DDLog.add(DDASLLogger.sharedInstance)
-    defaultDebugLevel = DDLogLevel.info
+    #if os(iOS)
+      DDLog.add(DDOSLogger.sharedInstance)
+    #else
+      if #available(OSX 10.12, *) {
+        DDLog.add(DDOSLogger.sharedInstance)
+      } else {
+        // Fallback on earlier versions
+        DDLog.add(DDASLLogger.sharedInstance)
+      }
+    #endif
+    dynamicLogLevel = DDLogLevel.info
   }
 
   // Adds |logMessage| to Sentry as a breadcrumb.

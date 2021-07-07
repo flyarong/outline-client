@@ -21,6 +21,7 @@
 ; StrFunc weirdness; this fix suggested here:
 ; https://github.com/electron-userland/electron-builder/issues/888
 !ifndef BUILD_UNINSTALLER
+${StrLoc}
 ${StrNSISToIO}
 ${StrRep}
 !endif
@@ -46,29 +47,53 @@ ${StrRep}
   ; TAP device files.
   SetOutPath "$INSTDIR\tap-windows6"
   ${If} ${RunningX64}
-    File /r "${PROJECT_DIR}\tap-windows6\amd64\*"
+    File /r "${PROJECT_DIR}\third_party\tap-windows6\bin\amd64\*"
   ${Else}
-    File /r "${PROJECT_DIR}\tap-windows6\i386\*"
+    File /r "${PROJECT_DIR}\third_party\tap-windows6\bin\i386\*"
   ${EndIf}
   SetOutPath -
-  File "${PROJECT_DIR}\electron\add_tap_device.bat"
+  File "${PROJECT_DIR}\src\electron\add_tap_device.bat"
+  File "${PROJECT_DIR}\src\electron\find_tap_device_name.bat"
 
   ; OutlineService files, stopping the service first in case it's still running.
   nsExec::Exec "net stop OutlineService"
-  File "${PROJECT_DIR}\OutlineService.exe"
-  File "${PROJECT_DIR}\Newtonsoft.Json.dll"
-  File "${PROJECT_DIR}\electron\install_windows_service.bat"
+  File "${PROJECT_DIR}\tools\OutlineService\OutlineService\bin\OutlineService.exe"
+  File "${PROJECT_DIR}\tools\smartdnsblock\bin\smartdnsblock.exe"
+  File "${PROJECT_DIR}\third_party\newtonsoft\Newtonsoft.Json.dll"
+  File "${PROJECT_DIR}\src\electron\install_windows_service.bat"
 
   ; ExecToStack captures both stdout and stderr from the script, in the order output.
+  ; Set a (long) timeout in case the device never becomes visible to netsh.
   ReadEnvStr $0 COMSPEC
-  nsExec::ExecToStack '$0 /c add_tap_device.bat'
+  nsExec::ExecToStack /timeout=180000 '$0 /c add_tap_device.bat'
 
   Pop $0
   Pop $1
   StrCmp $0 0 installservice
+
+  ; The TAP device may have failed to install because the user did not want to
+  ; install the device driver. If so:
+  ;  - tell the user that they need to install the driver
+  ;  - skip the Sentry report
+  ;  - quit
+  ;
+  ; When this happens, tapinstall.exe prints an error message like this:
+  ; UpdateDriverForPlugAndPlayDevices failed, GetLastError=-536870333
+  ;
+  ; We can use the presence of that magic number to detect this case.
+  Var /GLOBAL DRIVER_FAILURE_MAGIC_NUMBER_INDEX
+  ${StrLoc} $DRIVER_FAILURE_MAGIC_NUMBER_INDEX $1 "536870333" ">"
+
+  StrCmp $DRIVER_FAILURE_MAGIC_NUMBER_INDEX "" submitsentryreport
+  ; The term "device software" is the same as that used by the prompt, at least on Windows 7.
+  MessageBox MB_OK "Sorry, you must install the device software in order to use Outline. Please try \
+    running the installer again."
+  Quit
+
+  submitsentryreport:
   MessageBox MB_OK "Sorry, we could not configure your system to connect to Outline. Please try \
     running the installer again. If you still cannot install Outline, please get in \
-    touch with us and let us know that the TAP device could not be installed."
+    touch with us and let us know that the TAP device failed to install with error code $0."
 
   ; Submit a Sentry error event.
   ;
@@ -87,7 +112,7 @@ ${StrRep}
   ;    string that Sentry will like *and* can fit on one line, e.g.
   ;    "device not found\ncommand failed"; fortunately, StrFunc.nsh's StrNSISToIO does precisely
   ;    this.
-  ;  - RELEASE and SENTRY_DSN are defined in env.nsh which is generated at build time by
+  ;  - RELEASE and SENTRY_URL are defined in env.nsh which is generated at build time by
   ;    {package,release}_action.sh.
 
   ; TODO: Remove this once we figure out why/if breadcrumbs are being truncated.
@@ -114,7 +139,7 @@ ${StrRep}
     "breadcrumbs":[\
       {"timestamp":1, "message":"$FAILURE_MESSAGE"}\
     ]\
-  }' /TOSTACK ${SENTRY_DSN} /END
+  }' /TOSTACK ${SENTRY_URL} /END
 
   Quit
 

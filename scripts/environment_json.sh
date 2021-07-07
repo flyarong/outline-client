@@ -17,14 +17,17 @@
 TYPE=dev
 PLATFORM=
 
+# TODO: Remove -p dev once the Electron clients can function without an environment.json file (see
+#       src/electron/build_action.sh for more info).
+
 function usage () {
-  echo "$0 [-r] [-h]"
-  echo "  -r: use prod Sentry keys"
-  echo "  -p: platform (android, ios, osx, browser, or windows)"
-  echo "  -h: this help message"
-  echo
-  echo "Examples:"
-  echo "  $0 -p android -r"
+  echo "$0 [-r] [-h]" 1>&2
+  echo "  -r: use prod Sentry keys" 1>&2
+  echo "  -p: platform (android, ios, osx, browser, windows, linux, or dev)" 1>&2
+  echo "  -h: this help message" 1>&2
+  echo 1>&2
+  echo "Examples:" 1>&2
+  echo "  $0 -p android -r" 1>&2
   exit 1
 }
 
@@ -71,6 +74,13 @@ function pull_from_osx_plist() {
   pull_from_plist "apple/xcode/osx/Outline/Outline-Info.plist" $1
 }
 
+function validate_env_vars() {
+  if [[ -z ${SENTRY_DSN:-} ]]; then
+    echo "SENTRY_DSN is undefined." 1>&2
+    exit 1
+  fi
+}
+
 case $PLATFORM in
   android | browser)
     APP_VERSION=$(pull_from_config_xml 'result.widget.$["version"]')
@@ -84,18 +94,21 @@ case $PLATFORM in
     APP_VERSION=$(pull_from_osx_plist CFBundleShortVersionString)
     APP_BUILD_NUMBER=$(pull_from_osx_plist CFBundleVersion)
     ;;
-  windows)
-    APP_VERSION=$(node -r fs -p 'JSON.parse(fs.readFileSync("package.json")).version;')
+  windows | linux | dev)
+    APP_VERSION=$($(dirname $0)/semantic_version.sh -p $PLATFORM)
     APP_BUILD_NUMBER="NA"
     ;;
   *) usage ;;
 esac
 
+if [[ "${TYPE}" == "release" ]]; then
+  validate_env_vars
+fi
+
 cat << EOM
 {
   "APP_VERSION": "$APP_VERSION",
   "APP_BUILD_NUMBER": "$APP_BUILD_NUMBER",
-  "SENTRY_DSN": "$(pull_from_config_xml result.widget.sentry[0].$TYPE[0].$.dsn)",
-  "SENTRY_NATIVE_DSN": "$(pull_from_config_xml result.widget.sentry[0][\"$TYPE-native\"][0].$.dsn)"
+  "SENTRY_DSN": "${SENTRY_DSN:-}"
 }
 EOM
