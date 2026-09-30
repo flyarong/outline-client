@@ -1,0 +1,341 @@
+// Copyright 2022 The Outline Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import url from 'url';
+
+import {downloadHttpsFile} from '@outline/infrastructure/build/download_file.mjs';
+import {getRootDir} from '@outline/infrastructure/build/get_root_dir.mjs';
+import {runAction} from '@outline/infrastructure/build/run_action.mjs';
+import {spawnStream} from '@outline/infrastructure/build/spawn_stream.mjs';
+import cordovaLib from 'cordova-lib';
+import * as dotenv from 'dotenv';
+
+const {cordova} = cordovaLib;
+
+import {getBuildParameters} from '../../build/get_build_parameters.mjs';
+
+const CORDOVA_PLATFORMS = ['android', 'ios', 'macos'];
+
+/**
+ * @description Builds the parameterized cordova binary (ios, macos, android).
+ *
+ * @param {string[]} parameters
+ */
+export async function main(...parameters) {
+  const {platform, buildMode, verbose} = getBuildParameters(parameters);
+
+  if (!CORDOVA_PLATFORMS.includes(platform)) {
+    throw new TypeError(
+      `The platform "${platform}" is not a valid Cordova platform. It must be one of: ${CORDOVA_PLATFORMS.join(
+        ', '
+      )}.`
+    );
+  }
+
+  await runAction('client/src/cordova/setup', ...parameters);
+
+  if (verbose) {
+    cordova.on('verbose', message =>
+      console.debug(`[cordova:verbose] ${message}`)
+    );
+  }
+
+  // this is so cordova doesn't complain about not being in a cordova project
+  process.env.PWD = path.resolve(getRootDir(), 'client');
+
+  if (platform === 'android') {
+    await spawnStream('go', 'tool', 'task', 'client:android:configure');
+    dotenv.config({
+      path: path.resolve(getRootDir(), 'output', 'client', 'android', '.env'),
+    });
+  }
+
+  switch (platform + buildMode) {
+    case 'android' + 'debug':
+      return androidDebug(verbose);
+    case 'android' + 'release':
+      if (!process.env.JAVA_HOME) {
+        throw new ReferenceError(
+          'JAVA_HOME must be defined in the environment to build an Android Release!'
+        );
+      }
+
+      if (
+        !(
+          process.env.ANDROID_KEY_STORE_PASSWORD &&
+          process.env.ANDROID_KEY_STORE_CONTENTS
+        )
+      ) {
+        throw new ReferenceError(
+          "Both 'ANDROID_KEY_STORE_PASSWORD' and 'ANDROID_KEY_STORE_CONTENTS' must be defined in the environment to build an Android Release!"
+        );
+      }
+
+      return androidRelease(
+        process.env.ANDROID_KEY_STORE_PASSWORD,
+        process.env.ANDROID_KEY_STORE_CONTENTS,
+        process.env.JAVA_HOME,
+        verbose
+      );
+    case 'ios' + 'debug':
+    case 'macos' + 'debug':
+      return appleDebug(platform);
+    case 'ios' + 'release':
+    case 'macos' + 'release':
+      return appleRelease(platform);
+  }
+}
+
+function getXcodeBuildArgs(platform) {
+  let destination, workspaceFilename;
+  switch (platform) {
+    case 'macos':
+      destination = 'generic/platform=macOS,variant=Mac Catalyst';
+      workspaceFilename = 'client.xcworkspace';
+      break;
+    case 'ios':
+    default:
+      destination = 'generic/platform=iOS';
+      workspaceFilename = 'client.xcworkspace';
+      break;
+  }
+  return [
+    '-workspace',
+    path.join(
+      getRootDir(),
+      'client',
+      'src',
+      'cordova',
+      'apple',
+      workspaceFilename
+    ),
+    '-scheme',
+    'Outline',
+    '-destination',
+    destination,
+  ];
+}
+
+async function appleDebug(platform) {
+  console.warn(
+    `WARNING: building "${platform}" in [DEBUG] mode. Do not publish this build!!`
+  );
+
+  return spawnStream(
+    'xcodebuild',
+    'clean',
+    ...getXcodeBuildArgs(platform),
+    'build',
+    '-configuration',
+    'Debug',
+    '-allowProvisioningUpdates',
+    'CODE_SIGN_IDENTITY=""',
+    'CODE_SIGNING_ALLOWED="NO"'
+  );
+}
+
+async function appleRelease(platform) {
+  const teamIdArgs = process.env.DEVELOPMENT_TEAM
+    ? [`DEVELOPMENT_TEAM=${process.env.DEVELOPMENT_TEAM}`]
+    : [];
+
+  return spawnStream(
+    'xcodebuild',
+    'clean',
+    ...getXcodeBuildArgs(platform),
+    'archive',
+    '-configuration',
+    'Release',
+    '-allowProvisioningUpdates',
+    ...teamIdArgs
+  );
+}
+
+async function androidDebug(verbose) {
+  console.warn(
+    'WARNING: building "android" in [DEBUG] mode. Do not publish this build!!'
+  );
+
+  // Alternatively:
+  // npx cordova build android -- --gradleArg=--include-build=../../src/cordova/android/OutlineAndroidLib
+  return cordova.compile({
+    verbose,
+    platforms: ['android'],
+    options: {
+      argv: [
+        // Path is relative to $WORKSPACE/client/platforms/android/.
+        // See https://docs.gradle.org/current/userguide/composite_builds.html#command_line_composite
+        // TODO(fortuna): Can we embed this in the gradle settings instead?
+        '--gradleArg=--include-build=../../src/cordova/android/OutlineAndroidLib',
+        verbose ? '--gradleArg=--info' : '--gradleArg=--quiet',
+      ],
+    },
+  });
+}
+
+// bundletool turns the release AAB into the installable universal APK we ship
+// to S3 (an AAB itself cannot be installed). We need a modern version: since
+// bundletool 1.17.0 it 16 KB-page-aligns the uncompressed native libraries in
+// the generated APK ("Default page size is now set to 16 KB"), which Android
+// 15+ and the Play Store require; the previously pinned 1.8.2 aligned them to
+// 4 KB. https://github.com/google/bundletool/releases/tag/1.17.0
+const JAVA_BUNDLETOOL_VERSION = '1.18.3';
+const JAVA_BUNDLETOOL_RESOURCE_URL = `https://github.com/google/bundletool/releases/download/${JAVA_BUNDLETOOL_VERSION}/bundletool-all-${JAVA_BUNDLETOOL_VERSION}.jar`;
+
+/**
+ * Verifies that the native libraries in an APK are aligned for 16 KB memory
+ * pages, as required by Android 15+ and the Play Store. Throws (failing the
+ * build) if any `.so` is misaligned, so a bundletool/packaging regression can
+ * never ship silently again.
+ *
+ * @param {string} apkPath path to the APK to check.
+ */
+async function verify16kAlignment(apkPath) {
+  const androidHome = process.env.ANDROID_HOME;
+  if (!androidHome) {
+    throw new ReferenceError(
+      'ANDROID_HOME must be defined in the environment to verify APK alignment!'
+    );
+  }
+
+  // zipalign lives in the build-tools; pick the newest installed version.
+  const buildToolsDir = path.resolve(androidHome, 'build-tools');
+  const buildToolsVersions = (await fs.readdir(buildToolsDir))
+    .filter(name => /^\d+\./.test(name))
+    .sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+  if (buildToolsVersions.length === 0) {
+    throw new ReferenceError(
+      `No Android build-tools found under ${buildToolsDir} to run zipalign!`
+    );
+  }
+  const zipalignPath = path.resolve(
+    buildToolsDir,
+    buildToolsVersions.at(-1),
+    'zipalign'
+  );
+
+  // `-c` checks (does not modify), `-P 16` requires 16 KB page alignment for
+  // shared libraries, `4` is the alignment for all other entries, `-v` is
+  // verbose. zipalign exits non-zero (making spawnStream throw) if misaligned.
+  await spawnStream(zipalignPath, '-c', '-P', '16', '-v', '4', apkPath);
+}
+
+async function androidRelease(ksPassword, ksContents, javaPath, verbose) {
+  const androidBuildPath = path.resolve(
+    getRootDir(),
+    'client',
+    'platforms',
+    'android'
+  );
+  const keystorePath = path.resolve(androidBuildPath, 'keystore.p12');
+
+  await fs.writeFile(keystorePath, Buffer.from(ksContents, 'base64'));
+
+  await cordova.compile({
+    verbose,
+    platforms: ['android'],
+    options: {
+      release: true,
+      argv: [
+        // Path is relative to /platforms/android/.
+        // See https://docs.gradle.org/current/userguide/composite_builds.html#command_line_composite
+        '--gradleArg=--include-build=../../src/cordova/android/OutlineAndroidLib',
+        verbose ? '--gradleArg=--info' : '--gradleArg=--quiet',
+        `--keystore=${keystorePath}`,
+        '--alias=privatekey',
+        `--storePassword=${ksPassword}`,
+        `--password=${ksPassword}`,
+        '--',
+        '--gradleArg=-PcdvBuildMultipleApks=true',
+      ],
+    },
+  });
+
+  const bundletoolPath = path.resolve(androidBuildPath, 'bundletool.jar');
+  await downloadHttpsFile(JAVA_BUNDLETOOL_RESOURCE_URL, bundletoolPath);
+
+  const outputPath = path.resolve(androidBuildPath, 'Outline.apks');
+
+  // Pass the keystore password through a file rather than `pass:<password>`:
+  // spawnStream echoes the full command line, and argv is visible to other
+  // processes via `ps`. bundletool reads only the first line of the file.
+  if (/[\r\n]/.test(ksPassword)) {
+    throw new TypeError(
+      'ANDROID_KEY_STORE_PASSWORD must not contain newline characters!'
+    );
+  }
+
+  // A unique 0700 temp directory per invocation, so concurrent builds
+  // cannot overwrite or delete each other's password file.
+  const ksPasswordDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'outline-android-signing-')
+  );
+  const ksPasswordPath = path.join(ksPasswordDir, 'keystore.pass');
+
+  try {
+    await fs.writeFile(ksPasswordPath, ksPassword, {mode: 0o600});
+
+    await spawnStream(
+      path.resolve(javaPath, 'bin', 'java'),
+      '-jar',
+      bundletoolPath,
+      'build-apks',
+      `--bundle=${path.resolve(
+        androidBuildPath,
+        'app',
+        'build',
+        'outputs',
+        'bundle',
+        'release',
+        'app-release.aab'
+      )}`,
+      `--output=${outputPath}`,
+      '--mode=universal',
+      `--ks=${keystorePath}`,
+      `--ks-pass=file:${ksPasswordPath}`,
+      '--ks-key-alias=privatekey',
+      `--key-pass=file:${ksPasswordPath}`
+    );
+  } finally {
+    await fs.rm(ksPasswordDir, {recursive: true, force: true});
+  }
+
+  // The universal `.apks` archive is a zip holding `universal.apk`. Extract it
+  // and assert its native libraries are 16 KB aligned before we ship it.
+  const extractDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), 'outline-android-align-')
+  );
+  try {
+    await spawnStream(
+      'unzip',
+      '-o',
+      outputPath,
+      'universal.apk',
+      '-d',
+      extractDir
+    );
+    await verify16kAlignment(path.resolve(extractDir, 'universal.apk'));
+  } finally {
+    await fs.rm(extractDir, {recursive: true, force: true});
+  }
+
+  return fs.rename(outputPath, path.resolve(androidBuildPath, 'Outline.zip'));
+}
+
+if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+  await main(...process.argv.slice(2));
+}

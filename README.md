@@ -1,82 +1,21 @@
-# Outline Client
-[![Build Status](https://travis-ci.org/Jigsaw-Code/outline-client.svg?branch=master)](https://travis-ci.org/Jigsaw-Code/outline-client)
+# <img alt="Outline Manager Logo" src="docs/resources/logo_manager.png" title="Outline Manager" width="32">&nbsp;&nbsp;Outline Apps&nbsp;&nbsp;<img alt="Outline Client Logo" src="docs/resources/logo_client.png" title="Outline Client" width="32">
 
-The Outline Client is a cross-platform VPN or proxy client for Windows, macOS, iOS, Android, and ChromeOS.  The Outline Client is designed for use with the [Outline Server](https://github.com/Jigsaw-Code/outline-server) software, but it is fully compatible with any [Shadowsocks](https://shadowsocks.org/) server that has UDP support enabled.
+[![Reddit](https://badgen.net/badge/Reddit/r%2Foutlinevpn/orange)](https://www.reddit.com/r/outlinevpn/) [![Mattermost](https://badgen.net/badge/Mattermost/Outline%20Community/blue)](https://community.internetfreedomfestival.org/community/channels/outline-community) [![Code Style: Google](https://img.shields.io/badge/code%20style-google-blueviolet.svg)](https://github.com/google/gts)
 
-The client's user interface is implemented in [Polymer](https://www.polymer-project.org/) 2.0.  Platform support is provided by [Cordova](https://cordova.apache.org/) and [Electron](https://electronjs.org/), with additional native components in this repository.
+Outline makes it easy for anyone to create a VPN server, allowing you to share access to the free and open internet with those in need. **We have two core applications:**
 
-## Requirements for all builds
+&nbsp;&nbsp;&nbsp;&nbsp;<img alt="Outline Manager Logo" src="docs/resources/logo_manager.png" title="Outline Manager" width="14">&nbsp;&nbsp;**Outline Manager** ([`/server_manager`](server_manager)): A graphical user interface for managing Outline servers. It is available for Windows, macOS, and Linux. [You can install the manager here](https://getoutline.org/get-started/#step-1). See [`server_manager/README.md`](./server_manager/README.md) for more information.
 
-All builds require [yarn](https://yarnpkg.com/en/docs/install), in addition to other per-platform requirements.  After cloning this repo, you should run "yarn" to install all dependencies.
 
-## Building the web app
+&nbsp;&nbsp;&nbsp;&nbsp;<img alt="Outline Client Logo" src="docs/resources/logo_client.png" title="Outline Client" width="14">&nbsp;&nbsp;**Outline Client** ([`/client`](client)): A cross-platform proxy client for Windows, macOS, iOS, Android, and Linux. The Outline Client is designed for use with the server deployed with the Outline Manager, but it is also fully compatible with any [Shadowsocks](https://shadowsocks.org/) server. [You can install the client here](https://getoutline.org/get-started/#step-3). See [`client/README.md`](./client/README.md) for more information.
 
-Outline clients shares the same web app across all platforms.  This code is located in the www directory.  If you are making changes to the shared web app and do not need to test platform-specific functionality, you can test in a desktop browser by running:
 
-    yarn gulp build --platform=browser --watch
+## Community and Support
 
-This command will automatically rebuild after any typescript file in the www directory changes, however it will need to be re-run to pick up other file changes.
+Interested in **contributing to Outline?** See our [Contributing Guide](CONTRIBUTING.md) for more information.
 
-Browser platform development will use fake servers to test successful and unsuccessful connections.
+See [AGENTS.md](./AGENTS.md) for AI agent and developer guidance.
 
-UI components are located in [www/ui_components](www/ui_components).  The app logic is located in [www/app](www/app).
+You can also **join the Outline Community** by signing up for the [IFF Mattermost](https://wiki.digitalrights.community/index.php?title=IFF_Mattermost)!
 
-## Building the Android app
-
-Additional requirements for Android:
-
-* Android Studio
-* Android SDK 26
-
-To build for android, run:
-
-    yarn gulp build --platform=android
-
-To rebuild after modifying platform dependent files, run:
-
-    yarn cordova platform rm android && yarn gulp build --platform=android
-
-If this gives you unexpected Cordova errors, run:
-
-    yarn run clean && yarn && yarn gulp build --platform=android
-
-Cordova will generate a new Android project in the platforms/android directory.  Install the built apk by  platforms/android/build/outputs/apk/android-armv7-debug.apk
-
-To learn more about developing for Android, see [docs/android-development](docs/android-development.md).
-
-### Building for Android with Docker
-
-A Docker image with all pre-requisites for Android builds is included.  To build:
-
-* Install dependencies with `./tools/build/build.sh yarn`
-* Then build with `./tools/build/build.sh yarn gulp build --platform=android`
-
-## Apple (macOS and iOS)
-
-Additional requirements for Apple:
-
-* An Apple Developer Account.  You will need to be invited to join the "Jigsaw Operations LLC" team
-* XCode 9+ ([download](https://developer.apple.com/xcode/))
-* XCode command line tools
-
-To build for macOS (OS X), run:
-
-    yarn run clean && yarn && yarn gulp build --platform=osx
-
-To build for iOS, run:
-
-    yarn run clean && yarn && yarn gulp build --platform=ios
-
-To learn more about developing for Apple, see [docs/apple-development](docs/apple-development.md)
-
-## Windows
-
-Additional requirements for building on Windows:
-
-* [Cygwin](https://cygwin.com/install.html). It provides the "missing Unix pieces" required by build system such as rsync (and many others)
-
-To build for Windows, run:
-
-    yarn do src/electron/build
-
-Unlike the Android and Apple clients, the Windows build uses the Electron framework, rather than Cordova.
+For customer support and to **contact us directly**, go to https://support.getoutline.org.
